@@ -1,0 +1,16 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-white text-zinc-900 font-sans antialiased;
+  }
+}
+
+/* 隐藏滚动条，为了更沉浸的体验 */
+::-webkit-scrollbar {
+  display: none;
+}
