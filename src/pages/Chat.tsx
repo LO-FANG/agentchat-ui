@@ -1251,11 +1251,11 @@ export default function Chat() {
   };
 
   return (
-    <div className="relative min-h-screen w-full overflow-hidden bg-white font-sans selection:bg-black selection:text-white animate-fade-in">
+    <div className="relative h-[100dvh] w-full overflow-hidden overscroll-none bg-white font-sans selection:bg-black selection:text-white animate-fade-in lg:h-auto lg:min-h-screen lg:overscroll-auto">
       <InteractiveBackground />
 
       {isMobile ? (
-        <div className="relative z-10 w-full h-[100dvh] bg-white">
+        <div className="relative z-10 w-full h-full bg-white">
           <div className="w-full h-full bg-white border-y border-zinc-200 flex flex-col">
             {mobileStage === "list" ? (
               <div className="flex-1 flex min-h-0">
