@@ -10,6 +10,7 @@ type ChatMessage = {
   role: "me" | "them";
   text: string;
   time: string;
+  timestamp?: number | null;
   senderDisplayName?: string;
   senderPhoto?: string | null;
 };
@@ -48,8 +49,41 @@ const isSameConversationList = (prev: Conversation[], next: Conversation[]) => {
 };
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
+const MESSAGE_TIME_GAP_MS = 5 * 60 * 1000;
 
 const formatTime = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+const formatMessageTime = (d: Date) =>
+  `${d.getFullYear()}年${pad2(d.getMonth() + 1)}月${pad2(d.getDate())}日 ${formatTime(d)}`;
+
+const isSameDay = (a: Date, b: Date) =>
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+
+const shouldShowMessageTime = (messages: ChatMessage[], index: number) => {
+  const current = messages[index];
+  if (!current) return false;
+  if (index === 0) return true;
+
+  const previous = messages[index - 1];
+  if (!previous) return true;
+
+  if (typeof current.timestamp === "number" && typeof previous.timestamp === "number") {
+    const currentDate = new Date(current.timestamp);
+    const previousDate = new Date(previous.timestamp);
+    if (!isSameDay(currentDate, previousDate)) return true;
+    return current.timestamp - previous.timestamp >= MESSAGE_TIME_GAP_MS;
+  }
+
+  return current.time !== previous.time;
+};
+
+const getMessageTimeLabel = (message: ChatMessage) => {
+  if (typeof message.timestamp === "number") {
+    return formatMessageTime(new Date(message.timestamp));
+  }
+  return message.time;
+};
 
 const seedConversations: Conversation[] = [
   { id: "c1", title: "Agent Support", subtitle: "随时输入 /help", time: "09:12", unread: 2, online: true },
@@ -133,13 +167,14 @@ export default function Chat() {
   const activeConversation = conversations.find((c) => c.id === activeId);
   const activeFriend = friends.find((f) => f.userId === activeId);
   const activeGroup = groups.find((g) => g.groupId === activeId);
+  const isActiveGroupConversation = Boolean(activeGroup);
   const currentUserId = userInfo?.userId || userInfo?.id || "";
   const activeChatTitle = activeFriend?.userName || activeFriend?.mobile || activeGroup?.groupName || activeConversation?.title || "会话";
 
   const meDisplayName = userInfo?.userName || userInfo?.mobile || "我";
   const mePhoto = userInfo?.photo ?? null;
   const peerDisplayName = activeFriend?.userName || activeFriend?.mobile || activeGroup?.groupName || activeConversation?.title || "对方";
-  const peerPhoto = activeFriend?.photo || activeConversation?.photo || null;
+  const peerPhoto = activeFriend?.photo || (isActiveGroupConversation ? null : activeConversation?.photo) || null;
 
   const buildPhotoSrc = (photo: string | null | undefined) => {
     if (!photo) return null;
@@ -299,7 +334,8 @@ export default function Chat() {
                 id: `${now.getTime()}`,
                 role: actualSenderId === currentUserId ? "me" : "them",
                 text,
-                time: formatTime(now),
+                time: formatMessageTime(now),
+                timestamp: now.getTime(),
                 senderDisplayName: actualSender?.userName || actualSender?.mobile || undefined,
                 senderPhoto: typeof actualSender?.photo === "string" ? actualSender.photo : null,
               };
@@ -557,7 +593,8 @@ export default function Chat() {
               id: String(item.messageId ?? `${item.senderId}-${item.time}`),
               role: actualSenderId === currentUserId ? "me" : "them",
               text: item.printMessage || item.message || (item.type === 1 ? "" : `[${item.type}]`),
-              time: typeof item.time === "number" ? formatTime(new Date(item.time)) : "",
+              time: typeof item.time === "number" ? formatMessageTime(new Date(item.time)) : "",
+              timestamp: typeof item.time === "number" ? item.time : null,
               senderDisplayName: actualSender?.userName || actualSender?.mobile || undefined,
               senderPhoto: typeof actualSender?.photo === "string" ? actualSender.photo : null,
             };
@@ -575,7 +612,10 @@ export default function Chat() {
   );
 
   const normalizeConversation = React.useCallback((item: any): Conversation => {
-    const isGroup = Boolean(item?.groupId || item?.groupMessage || item?.groupName);
+    const rawId = item?.groupId ?? item?.receiverId ?? item?.id ?? item?.userId;
+    const candidateId = rawId == null ? "" : String(rawId);
+    const isKnownGroup = Boolean(candidateId && groups.some((group) => group.groupId === candidateId));
+    const isGroup = Boolean(item?.groupId || item?.groupMessage || item?.groupName || isKnownGroup);
     const user = item?.user ?? item?.friendUser ?? item?.applyUser ?? item;
     const id = String(isGroup ? (item?.groupId ?? item?.receiverId ?? item?.id ?? "") : (user?.userId ?? item?.userId ?? item?.id ?? ""));
     const title = String(isGroup ? (item?.groupName ?? item?.title ?? id) : (user?.userName ?? user?.mobile ?? item?.title ?? id));
@@ -594,7 +634,7 @@ export default function Chat() {
       photo,
       online: typeof online === "boolean" ? online : undefined,
     };
-  }, []);
+  }, [groups]);
 
   const buildFallbackConversation = React.useCallback((targetId: string): Conversation | null => {
     if (!targetId) return null;
@@ -772,7 +812,13 @@ export default function Chat() {
     const text = draft.trim();
     if (!text || !userInfo || !activeId) return;
     const now = new Date();
-    const msg: ChatMessage = { id: `${now.getTime()}`, role: "me", text, time: formatTime(now) };
+    const msg: ChatMessage = {
+      id: `${now.getTime()}`,
+      role: "me",
+      text,
+      time: formatMessageTime(now),
+      timestamp: now.getTime(),
+    };
     setMessagesById((prev) => ({ ...prev, [activeId]: [...(prev[activeId] ?? []), msg] }));
     setDraft("");
     tiks.pop();
@@ -1023,6 +1069,7 @@ export default function Chat() {
           {filteredConversations.length > 0 ? (
             filteredConversations.map((conv) => {
               const active = conv.id === activeId;
+              const isGroupConversation = groups.some((group) => group.groupId === conv.id);
               return (
                 <button
                   key={conv.id}
@@ -1034,7 +1081,7 @@ export default function Chat() {
                 >
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
-                      {conv.photo ? (
+                      {!isGroupConversation && conv.photo ? (
                         <img
                           src={conv.photo.startsWith('http') ? conv.photo : `${import.meta.env.VITE_API_BASE_URL || ''}${conv.photo.startsWith('/') ? '' : '/'}${conv.photo}`}
                           alt="avatar"
@@ -1341,19 +1388,22 @@ export default function Chat() {
                         <div className="w-5 h-5 rounded-full border-2 border-zinc-300 border-t-zinc-800 animate-spin" />
                         <span className="text-zinc-400 font-mono text-[11px]">加载聊天记录中...</span>
                       </div>
-                    ) : activeMessages.map((m) => {
+                    ) : activeMessages.map((m, index) => {
                       const mine = m.role === "me";
                       const displayName = m.senderDisplayName || (mine ? meDisplayName : peerDisplayName);
                       const photo = m.senderPhoto ?? (mine ? mePhoto : peerPhoto);
                       const photoSrc = buildPhotoSrc(photo);
+                      const showTime = shouldShowMessageTime(activeMessages, index);
                       return (
                         <div key={m.id} className="w-full">
-                          <div className="w-full flex justify-center">
-                            <div className="px-2 py-0.5 rounded-full text-[11px] text-zinc-400 font-mono">
-                              {m.time}
+                          {showTime ? (
+                            <div className="w-full flex justify-center">
+                              <div className="px-3 py-1 rounded-full text-[11px] text-zinc-400 font-mono bg-white/70 border border-zinc-200">
+                                {getMessageTimeLabel(m)}
+                              </div>
                             </div>
-                          </div>
-                          <div className={`mt-2 w-full flex ${mine ? "justify-end" : "justify-start"} gap-3`}>
+                          ) : null}
+                          <div className={`${showTime ? "mt-2" : ""} w-full flex ${mine ? "justify-end" : "justify-start"} gap-3`}>
                             {!mine ? (
                               <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
                                 {photoSrc ? (
@@ -1576,19 +1626,22 @@ export default function Chat() {
                           <div className="w-5 h-5 rounded-full border-2 border-zinc-300 border-t-zinc-800 animate-spin" />
                           <span className="text-zinc-400 font-mono text-[11px]">加载聊天记录中...</span>
                         </div>
-                      ) : activeMessages.map((m) => {
+                      ) : activeMessages.map((m, index) => {
                         const mine = m.role === "me";
                         const displayName = m.senderDisplayName || (mine ? meDisplayName : peerDisplayName);
                         const photo = m.senderPhoto ?? (mine ? mePhoto : peerPhoto);
                         const photoSrc = buildPhotoSrc(photo);
+                        const showTime = shouldShowMessageTime(activeMessages, index);
                         return (
                           <div key={m.id} className="w-full">
-                            <div className="w-full flex justify-center">
-                              <div className="px-2 py-0.5 rounded-full text-[11px] text-zinc-400 font-mono">
-                                {m.time}
+                            {showTime ? (
+                              <div className="w-full flex justify-center">
+                                <div className="px-3 py-1 rounded-full text-[11px] text-zinc-400 font-mono bg-white/70 border border-zinc-200">
+                                  {getMessageTimeLabel(m)}
+                                </div>
                               </div>
-                            </div>
-                            <div className={`mt-2 w-full flex ${mine ? "justify-end" : "justify-start"} gap-3`}>
+                            ) : null}
+                            <div className={`${showTime ? "mt-2" : ""} w-full flex ${mine ? "justify-end" : "justify-start"} gap-3`}>
                               {!mine ? (
                                 <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
                                   {photoSrc ? (
