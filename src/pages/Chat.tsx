@@ -1,7 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { InteractiveBackground } from "@/components/ui/InteractiveBackground";
-import { resolveAssetUrl } from "@/lib/utils";
 import { ChevronLeft, Search, Send, Paperclip, Info, LogOut, Bell, UserPlus, Smile, Folder, Image as ImageIcon, MessageSquare, Users } from "lucide-react";
 import { tiks } from "@rexa-developer/tiks";
 import { getCurrentUserInfo, UserInfo, searchUserByMobile, SearchUserInfo, applyAddFriend, getUnhandledFriendApplies, countUnhandledFriendApplies, FriendApplyItem, passFriendApply, refuseFriendApply, listFriendUsers, logoutUser, sendMessage, listChatMessageUsers, countUnreadMessageUsers, queryChatMessages, createChatGroup, listGroups, GroupInfo } from "@/api/auth";
@@ -143,7 +142,10 @@ export default function Chat() {
   const peerPhoto = activeFriend?.photo || activeConversation?.photo || null;
 
   const buildPhotoSrc = (photo: string | null | undefined) => {
-    return resolveAssetUrl(photo);
+    if (!photo) return null;
+    if (photo.startsWith("http")) return photo;
+    const base = import.meta.env.VITE_API_BASE_URL || "";
+    return `${base}${photo.startsWith("/") ? "" : "/"}${photo}`;
   };
 
   const getIncomingConversationId = React.useCallback((mess: any) => {
@@ -1021,7 +1023,6 @@ export default function Chat() {
           {filteredConversations.length > 0 ? (
             filteredConversations.map((conv) => {
               const active = conv.id === activeId;
-              const photoSrc = buildPhotoSrc(conv.photo);
               return (
                 <button
                   key={conv.id}
@@ -1033,9 +1034,9 @@ export default function Chat() {
                 >
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
-                      {photoSrc ? (
+                      {conv.photo ? (
                         <img
-                          src={photoSrc}
+                          src={conv.photo.startsWith('http') ? conv.photo : `${import.meta.env.VITE_API_BASE_URL || ''}${conv.photo.startsWith('/') ? '' : '/'}${conv.photo}`}
                           alt="avatar"
                           className="h-full w-full object-cover"
                         />
@@ -1114,7 +1115,6 @@ export default function Chat() {
           ) : filteredFriends.length > 0 ? (
             filteredFriends.map((friend) => {
               const active = friend.userId === activeId;
-              const photoSrc = buildPhotoSrc(friend.photo);
               return (
                 <button
                   key={friend.userId}
@@ -1126,9 +1126,9 @@ export default function Chat() {
                 >
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
-                      {photoSrc ? (
+                      {friend.photo ? (
                         <img
-                          src={photoSrc}
+                          src={friend.photo.startsWith('http') ? friend.photo : `${import.meta.env.VITE_API_BASE_URL || ''}${friend.photo.startsWith('/') ? '' : '/'}${friend.photo}`}
                           alt="avatar"
                           className="h-full w-full object-cover"
                         />
@@ -1693,14 +1693,11 @@ export default function Chat() {
                   <div className="space-y-3">
                     {userInfo && (
                       <>
-                        {(() => {
-                          const photoSrc = buildPhotoSrc(userInfo.photo);
-                          return (
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-full bg-zinc-100 border-2 border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
-                            {photoSrc ? (
+                            {userInfo.photo ? (
                               <img 
-                                src={photoSrc} 
+                                src={userInfo.photo.startsWith('http') ? userInfo.photo : `${import.meta.env.VITE_API_BASE_URL || ''}${userInfo.photo.startsWith('/') ? '' : '/'}${userInfo.photo}`} 
                                 alt="avatar" 
                                 className="h-full w-full object-cover" 
                               />
@@ -1724,8 +1721,6 @@ export default function Chat() {
                             </div>
                           </div>
                         </div>
-                          );
-                        })()}
                         <div className="my-3 border-t border-dashed border-zinc-200"></div>
                       </>
                     )}
@@ -1893,9 +1888,6 @@ export default function Chat() {
                     <span className="text-zinc-400 font-mono text-[11px]">搜索中...</span>
                   </div>
                 ) : searchResult ? (
-                  (() => {
-                    const photoSrc = buildPhotoSrc(searchResult.photo);
-                    return (
                   <button
                     type="button"
                     onClick={() => {
@@ -1906,9 +1898,9 @@ export default function Chat() {
                   >
                     <div className="flex items-center gap-3">
                       <div className="h-10 w-10 rounded-full bg-zinc-100 border-2 border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
-                        {photoSrc ? (
+                        {searchResult.photo ? (
                           <img
-                            src={photoSrc}
+                            src={searchResult.photo.startsWith("http") ? searchResult.photo : `${import.meta.env.VITE_API_BASE_URL || ""}${searchResult.photo.startsWith("/") ? "" : "/"}${searchResult.photo}`}
                             alt="avatar"
                             className="h-full w-full object-cover"
                           />
@@ -1929,8 +1921,6 @@ export default function Chat() {
                       </div>
                     </div>
                   </button>
-                    );
-                  })()
                 ) : (
                   <div className="py-8 text-center text-zinc-400 font-mono text-[11px] tracking-widest uppercase">
                     未找到匹配用户
@@ -2006,7 +1996,6 @@ export default function Chat() {
                   <div className="space-y-2">
                     {filteredGroupFriends.map((friend) => {
                       const selected = selectedGroupUserIds.includes(friend.userId);
-                      const photoSrc = buildPhotoSrc(friend.photo);
                       return (
                         <button
                           key={friend.userId}
@@ -2018,9 +2007,9 @@ export default function Chat() {
                           } disabled:opacity-50`}
                         >
                           <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
-                            {photoSrc ? (
+                            {friend.photo ? (
                               <img
-                                src={photoSrc}
+                                src={friend.photo.startsWith("http") ? friend.photo : `${import.meta.env.VITE_API_BASE_URL || ""}${friend.photo.startsWith("/") ? "" : "/"}${friend.photo}`}
                                 alt="avatar"
                                 className="h-full w-full object-cover"
                               />
@@ -2085,13 +2074,10 @@ export default function Chat() {
             </button>
             
             <div className="pt-10 pb-6 px-6 flex flex-col items-center">
-              {(() => {
-                const photoSrc = buildPhotoSrc(selectedUserForDetails.photo);
-                return (
               <div className="h-20 w-20 rounded-full bg-zinc-100 border-[3px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_3px_rgba(255,255,255,1),0_0_0_4px_rgba(0,0,0,0.1)] mb-4">
-                {photoSrc ? (
+                {selectedUserForDetails.photo ? (
                   <img
-                    src={photoSrc}
+                    src={selectedUserForDetails.photo.startsWith('http') ? selectedUserForDetails.photo : `${import.meta.env.VITE_API_BASE_URL || ''}${selectedUserForDetails.photo.startsWith('/') ? '' : '/'}${selectedUserForDetails.photo}`}
                     alt="avatar"
                     className="h-full w-full object-cover"
                   />
@@ -2101,8 +2087,6 @@ export default function Chat() {
                   </span>
                 )}
               </div>
-                );
-              })()}
               
               <div className="font-mono text-lg font-bold text-zinc-900 text-center mb-1">
                 {selectedUserForDetails.userName || "未命名"}
@@ -2178,13 +2162,12 @@ export default function Chat() {
                   {friendApplies.map((apply) => {
                     const date = new Date(apply.applyTime);
                     const timeStr = `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
-                    const photoSrc = buildPhotoSrc(apply.applyUser.photo);
                     return (
                       <div key={apply.applyId} className="p-4 bg-zinc-50/50 rounded-2xl border border-zinc-100 flex gap-3">
                         <div className="h-10 w-10 rounded-full bg-zinc-100 border border-zinc-200 overflow-hidden flex items-center justify-center shrink-0">
-                          {photoSrc ? (
+                          {apply.applyUser.photo ? (
                             <img
-                              src={photoSrc}
+                              src={apply.applyUser.photo.startsWith('http') ? apply.applyUser.photo : `${import.meta.env.VITE_API_BASE_URL || ''}${apply.applyUser.photo.startsWith('/') ? '' : '/'}${apply.applyUser.photo}`}
                               alt="avatar"
                               className="h-full w-full object-cover"
                             />
