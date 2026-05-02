@@ -1,4 +1,5 @@
 import request from './request';
+import { resolveAssetUrl } from '@/lib/utils';
 
 // 定义接口返回和请求的数据类型 (Types)
 export interface ApiResponseResult<T> {
@@ -164,7 +165,11 @@ export const getSlideVerification = (): Promise<ApiResponseResult<SlideVerificat
 };
 
 export const getSlideVerificationImage = async (imagePath: string): Promise<string> => {
-  const res = await request.get(imagePath, { responseType: 'blob', withCredentials: true });
+  const resolvedImagePath = resolveAssetUrl(imagePath);
+  if (!resolvedImagePath) {
+    throw new Error('滑块图片地址无效');
+  }
+  const res = await request.get(resolvedImagePath, { responseType: 'blob', withCredentials: true });
   return URL.createObjectURL(res.data);
 };
 
