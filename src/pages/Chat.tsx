@@ -1,7 +1,7 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { InteractiveBackground } from "@/components/ui/InteractiveBackground";
-import { ChevronLeft, Search, Send, Paperclip, Info, LogOut, Bell, UserPlus, Smile, Folder, Image as ImageIcon, MessageSquare, Users } from "lucide-react";
+import { ChevronLeft, Search, Send, Plus, Info, LogOut, Bell, UserPlus, Smile, Folder, Image as ImageIcon, MessageSquare, Users } from "lucide-react";
 import { tiks } from "@rexa-developer/tiks";
 import { getCurrentUserInfo, UserInfo, searchUserByMobile, SearchUserInfo, applyAddFriend, getUnhandledFriendApplies, countUnhandledFriendApplies, FriendApplyItem, passFriendApply, refuseFriendApply, listFriendUsers, logoutUser, sendMessage, listChatMessageUsers, countUnreadMessageUsers, queryChatMessages, createChatGroup, listGroups, GroupInfo } from "@/api/auth";
 
@@ -145,8 +145,10 @@ export default function Chat() {
   const [groupMemberQuery, setGroupMemberQuery] = React.useState("");
   const [selectedGroupUserIds, setSelectedGroupUserIds] = React.useState<string[]>([]);
   const [isWsConnected, setIsWsConnected] = React.useState(false);
+  const [isMobileComposerToolsOpen, setIsMobileComposerToolsOpen] = React.useState(false);
   const toastTimerRef = React.useRef<number | null>(null);
   const bottomRef = React.useRef<HTMLDivElement | null>(null);
+  const mobileComposerToolsRef = React.useRef<HTMLDivElement | null>(null);
   const wsRef = React.useRef<WebSocket | null>(null);
   const heartbeatTimeoutRef = React.useRef<number | null>(null);
   const reconnectTimerRef = React.useRef<number | null>(null);
@@ -454,6 +456,28 @@ export default function Chat() {
   React.useEffect(() => {
     if (isMobile) setMobileStage("list");
   }, [isMobile]);
+
+  React.useEffect(() => {
+    if (!isMobile || mobileStage !== "chat") {
+      setIsMobileComposerToolsOpen(false);
+    }
+  }, [isMobile, mobileStage]);
+
+  React.useEffect(() => {
+    if (!isMobile || !isMobileComposerToolsOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (mobileComposerToolsRef.current?.contains(target)) return;
+      setIsMobileComposerToolsOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [isMobile, isMobileComposerToolsOpen]);
 
   React.useEffect(() => {
     if (!isAddFriendOpen) return;
@@ -1053,6 +1077,10 @@ export default function Chat() {
     }
   };
 
+  const handleMobileComposerToolClick = React.useCallback(() => {
+    setIsMobileComposerToolsOpen(false);
+  }, []);
+
   const renderSidebarList = (isMobileView: boolean) => {
     if (sidebarTab === 'sessions') {
       if (isLoadingSessions) {
@@ -1454,12 +1482,44 @@ export default function Chat() {
 
                 <div className="border-t border-zinc-200 px-3 py-3 bg-white">
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="h-11 w-11 rounded-full border border-zinc-200 bg-white hover:border-black transition-colors flex items-center justify-center text-zinc-700"
-                    >
-                      <Paperclip className="w-4 h-4" />
-                    </button>
+                    <div ref={mobileComposerToolsRef} className="relative shrink-0">
+                      {isMobileComposerToolsOpen ? (
+                        <div className="absolute left-0 bottom-[calc(100%+8px)] flex flex-col gap-2 rounded-2xl border border-zinc-200 bg-white p-2 shadow-[0_16px_40px_rgba(0,0,0,0.12)]">
+                          <button
+                            type="button"
+                            onClick={handleMobileComposerToolClick}
+                            className="h-10 w-10 rounded-full border border-zinc-200 bg-white transition-colors flex items-center justify-center text-zinc-700 active:bg-zinc-100"
+                          >
+                            <Smile className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleMobileComposerToolClick}
+                            className="h-10 w-10 rounded-full border border-zinc-200 bg-white transition-colors flex items-center justify-center text-zinc-700 active:bg-zinc-100"
+                          >
+                            <Folder className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleMobileComposerToolClick}
+                            className="h-10 w-10 rounded-full border border-zinc-200 bg-white transition-colors flex items-center justify-center text-zinc-700 active:bg-zinc-100"
+                          >
+                            <ImageIcon className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setIsMobileComposerToolsOpen((prev) => !prev)}
+                        className={`h-11 w-11 rounded-full border transition-colors flex items-center justify-center ${
+                          isMobileComposerToolsOpen
+                            ? "border-black bg-zinc-100 text-black"
+                            : "border-zinc-200 bg-white text-zinc-700"
+                        }`}
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                    </div>
                     <div className="flex-1">
                       <textarea
                         value={draft}
@@ -1470,7 +1530,7 @@ export default function Chat() {
                             send();
                           }
                         }}
-                        className="w-full resize-none bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-2.5 font-mono text-[13px] text-black placeholder-zinc-400 focus:outline-none focus:border-black transition-colors h-11 leading-[22px]"
+                        className="w-full resize-none bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-2.5 font-mono text-[16px] text-black placeholder-zinc-400 focus:outline-none focus:border-black transition-colors h-11 leading-[22px] lg:text-[13px]"
                         placeholder="输入消息..."
                         rows={1}
                       />
