@@ -1,7 +1,7 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { InteractiveBackground } from "@/components/ui/InteractiveBackground";
-import { ChevronLeft, Search, Send, Plus, Info, LogOut, Bell, UserPlus, Smile, Folder, Image as ImageIcon, MessageSquare, Users } from "lucide-react";
+import { ArrowDown, ChevronLeft, ChevronRight, Search, Send, Plus, Info, LogOut, Bell, UserPlus, Smile, Folder, Image as ImageIcon, MessageSquare, Users } from "lucide-react";
 import { tiks } from "@rexa-developer/tiks";
 import { getCurrentUserInfo, UserInfo, searchUserByMobile, SearchUserInfo, applyAddFriend, getUnhandledFriendApplies, countUnhandledFriendApplies, FriendApplyItem, passFriendApply, refuseFriendApply, listFriendUsers, logoutUser, sendMessage, listChatMessageUsers, countUnreadMessageUsers, queryChatMessages, createChatGroup, listGroups, GroupInfo } from "@/api/auth";
 
@@ -50,6 +50,7 @@ const isSameConversationList = (prev: Conversation[], next: Conversation[]) => {
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 const MESSAGE_TIME_GAP_MS = 5 * 60 * 1000;
+const SCROLL_TO_BOTTOM_THRESHOLD = 120;
 
 const formatTime = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 const formatMessageTime = (d: Date) =>
@@ -104,6 +105,27 @@ const seedMessages: Record<string, ChatMessage[]> = {
   c3: [{ id: "m1", role: "them", text: "系统提示：这是一个演示会话。", time: "周一" }],
 };
 
+const EMOJI_PAGES = [
+  [
+    "😀", "😁", "😂", "🤣", "😊", "😍", "😘", "😎",
+    "🤔", "😴", "😭", "😡", "🥳", "😇", "🤗", "🤝",
+    "👍", "👎", "👏", "🙏", "💪", "❤️", "💯", "🔥",
+    "🎉", "✨", "🌈", "☕", "🍀", "🚀",
+  ],
+  [
+    "😄", "😅", "😉", "🙂", "🙃", "😋", "😜", "🤩",
+    "🥰", "😌", "😏", "😬", "😷", "🤒", "🤯", "🥺",
+    "😢", "😤", "😱", "🤐", "🫠", "🙌", "👌", "✌️",
+    "🤟", "🫶", "💖", "💔", "🌟", "🎈",
+  ],
+  [
+    "🐶", "🐱", "🐼", "🐯", "🦊", "🐸", "🐵", "🐤",
+    "🌞", "🌙", "⭐", "☁️", "🌸", "🌻", "🍎", "🍓",
+    "🍕", "🍟", "🍜", "🍰", "⚽", "🏀", "🎮", "🎵",
+    "🎤", "📚", "💻", "📷", "🧡", "🤍",
+  ],
+] as const;
+
 export default function Chat() {
   const navigate = useNavigate();
   const [sidebarTab, setSidebarTab] = React.useState<"sessions" | "friends">("sessions");
@@ -146,9 +168,19 @@ export default function Chat() {
   const [selectedGroupUserIds, setSelectedGroupUserIds] = React.useState<string[]>([]);
   const [isWsConnected, setIsWsConnected] = React.useState(false);
   const [isMobileComposerToolsOpen, setIsMobileComposerToolsOpen] = React.useState(false);
+  const [isDesktopEmojiPickerOpen, setIsDesktopEmojiPickerOpen] = React.useState(false);
+  const [isMobileEmojiPickerOpen, setIsMobileEmojiPickerOpen] = React.useState(false);
+  const [desktopEmojiPage, setDesktopEmojiPage] = React.useState(0);
+  const [mobileEmojiPage, setMobileEmojiPage] = React.useState(0);
+  const [showScrollToBottom, setShowScrollToBottom] = React.useState(false);
   const toastTimerRef = React.useRef<number | null>(null);
   const bottomRef = React.useRef<HTMLDivElement | null>(null);
   const mobileComposerToolsRef = React.useRef<HTMLDivElement | null>(null);
+  const desktopEmojiPickerRef = React.useRef<HTMLDivElement | null>(null);
+  const desktopComposerRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const mobileComposerRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const desktopMessagesRef = React.useRef<HTMLDivElement | null>(null);
+  const mobileMessagesRef = React.useRef<HTMLDivElement | null>(null);
   const wsRef = React.useRef<WebSocket | null>(null);
   const heartbeatTimeoutRef = React.useRef<number | null>(null);
   const reconnectTimerRef = React.useRef<number | null>(null);
@@ -161,6 +193,8 @@ export default function Chat() {
   const initialHistoryLoadedRef = React.useRef(false);
   const conversationRefreshTimerRef = React.useRef<number | null>(null);
   const previousActiveIdRef = React.useRef("");
+  const shouldAutoScrollRef = React.useRef(true);
+  const forceScrollToBottomRef = React.useRef(false);
   const fetchSessionsRef = React.useRef<(selectUser?: string, options?: { silent?: boolean }) => void | Promise<void>>(() => {});
   const refreshUnreadMessageCountRef = React.useRef<() => void | Promise<void>>(() => {});
   const updateConversationLocallyRef = React.useRef<(mess: any, conversationId: string, isActiveConversation: boolean) => void>(() => {});
@@ -196,6 +230,60 @@ export default function Chat() {
     activeIdRef.current = activeId;
   }, [activeId]);
 
+  const getActiveComposer = React.useCallback(() => {
+    if (isMobile) return mobileComposerRef.current;
+    return desktopComposerRef.current;
+  }, [isMobile]);
+
+  const focusActiveComposer = React.useCallback(() => {
+    const composer = getActiveComposer();
+    if (!composer) return;
+    composer.focus();
+    const textLength = composer.value.length;
+    try {
+      composer.setSelectionRange(textLength, textLength);
+    } catch (error) {
+      console.warn("设置输入框光标位置失败", error);
+    }
+  }, [getActiveComposer]);
+
+  const getActiveMessagesContainer = React.useCallback(() => {
+    if (isMobile) {
+      return mobileStage === "chat" ? mobileMessagesRef.current : null;
+    }
+    return sidebarTab === "sessions" ? desktopMessagesRef.current : null;
+  }, [isMobile, mobileStage, sidebarTab]);
+
+  const isNearBottom = React.useCallback((container: HTMLDivElement | null) => {
+    if (!container) return true;
+    return container.scrollHeight - container.scrollTop - container.clientHeight <= SCROLL_TO_BOTTOM_THRESHOLD;
+  }, []);
+
+  const updateScrollToBottomState = React.useCallback((container?: HTMLDivElement | null) => {
+    const target = container ?? getActiveMessagesContainer();
+    if (!target) {
+      shouldAutoScrollRef.current = true;
+      setShowScrollToBottom(false);
+      return;
+    }
+    const nextShouldAutoScroll = isNearBottom(target);
+    shouldAutoScrollRef.current = nextShouldAutoScroll;
+    setShowScrollToBottom(!nextShouldAutoScroll);
+  }, [getActiveMessagesContainer, isNearBottom]);
+
+  const scrollToBottom = React.useCallback((behavior: ScrollBehavior = "smooth") => {
+    shouldAutoScrollRef.current = true;
+    setShowScrollToBottom(false);
+    bottomRef.current?.scrollIntoView({ behavior, block: "end" });
+    window.requestAnimationFrame(() => {
+      updateScrollToBottomState();
+    });
+  }, [updateScrollToBottomState]);
+
+  const handleMessagesScroll = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    updateScrollToBottomState(event.currentTarget);
+  }, [updateScrollToBottomState]);
+
   const showToast = React.useCallback((variant: ToastState["variant"], message: string) => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     setToast({ variant, message });
@@ -228,10 +316,39 @@ export default function Chat() {
   }, [navigate]);
 
   React.useEffect(() => {
-    const behavior = previousActiveIdRef.current === activeId ? "smooth" : "auto";
-    bottomRef.current?.scrollIntoView({ behavior, block: "end" });
+    if (!activeId) {
+      previousActiveIdRef.current = activeId;
+      setShowScrollToBottom(false);
+      return;
+    }
+
+    const hasSwitchedConversation = previousActiveIdRef.current !== activeId;
+    const shouldScroll = hasSwitchedConversation || forceScrollToBottomRef.current || shouldAutoScrollRef.current;
+
+    if (shouldScroll) {
+      scrollToBottom(hasSwitchedConversation ? "auto" : "smooth");
+    } else {
+      setShowScrollToBottom(true);
+    }
+
+    forceScrollToBottomRef.current = false;
     previousActiveIdRef.current = activeId;
-  }, [activeId, activeMessages.length]);
+  }, [activeId, activeMessages.length, scrollToBottom]);
+
+  React.useEffect(() => {
+    if ((isMobile && mobileStage !== "chat") || (!isMobile && sidebarTab !== "sessions")) {
+      setShowScrollToBottom(false);
+      return;
+    }
+
+    const rafId = window.requestAnimationFrame(() => {
+      updateScrollToBottomState();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [activeId, isMobile, mobileStage, sidebarTab, updateScrollToBottomState]);
 
   React.useEffect(() => {
     if (!userInfo) return;
@@ -460,24 +577,57 @@ export default function Chat() {
   React.useEffect(() => {
     if (!isMobile || mobileStage !== "chat") {
       setIsMobileComposerToolsOpen(false);
+      setIsMobileEmojiPickerOpen(false);
+      setMobileEmojiPage(0);
     }
   }, [isMobile, mobileStage]);
 
   React.useEffect(() => {
-    if (!isMobile || !isMobileComposerToolsOpen) return;
+    if (!isMobile || (!isMobileComposerToolsOpen && !isMobileEmojiPickerOpen)) return;
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (!target) return;
       if (mobileComposerToolsRef.current?.contains(target)) return;
       setIsMobileComposerToolsOpen(false);
+      setIsMobileEmojiPickerOpen(false);
+      setMobileEmojiPage(0);
     };
 
     document.addEventListener("pointerdown", handlePointerDown);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
     };
-  }, [isMobile, isMobileComposerToolsOpen]);
+  }, [isMobile, isMobileComposerToolsOpen, isMobileEmojiPickerOpen]);
+
+  React.useEffect(() => {
+    if (isMobileComposerToolsOpen) return;
+    setIsMobileEmojiPickerOpen(false);
+    setMobileEmojiPage(0);
+  }, [isMobileComposerToolsOpen]);
+
+  React.useEffect(() => {
+    if (isMobile || !isDesktopEmojiPickerOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (desktopEmojiPickerRef.current?.contains(target)) return;
+      setIsDesktopEmojiPickerOpen(false);
+      setDesktopEmojiPage(0);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [isDesktopEmojiPickerOpen, isMobile]);
+
+  React.useEffect(() => {
+    if (!isMobile) return;
+    setIsDesktopEmojiPickerOpen(false);
+    setDesktopEmojiPage(0);
+  }, [isMobile]);
 
   React.useEffect(() => {
     if (!isAddFriendOpen) return;
@@ -835,6 +985,7 @@ export default function Chat() {
   const send = async () => {
     const text = draft.trim();
     if (!text || !userInfo || !activeId) return;
+    forceScrollToBottomRef.current = true;
     const now = new Date();
     const msg: ChatMessage = {
       id: `${now.getTime()}`,
@@ -882,6 +1033,8 @@ export default function Chat() {
   };
 
   const openConversation = React.useCallback((id: string, options?: { skipPostRefresh?: boolean }) => {
+    forceScrollToBottomRef.current = true;
+    setShowScrollToBottom(false);
     setActiveId(id);
     if (isMobile) setMobileStage("chat");
     void fetchChatHistory(id);
@@ -1078,8 +1231,102 @@ export default function Chat() {
   };
 
   const handleMobileComposerToolClick = React.useCallback(() => {
+    setIsMobileEmojiPickerOpen(false);
     setIsMobileComposerToolsOpen(false);
+    setMobileEmojiPage(0);
   }, []);
+
+  const handleEmojiSelect = React.useCallback((emoji: string, source: "desktop" | "mobile") => {
+    setDraft((prev) => `${prev}${emoji}`);
+    if (source === "desktop") {
+      setIsDesktopEmojiPickerOpen(false);
+      setDesktopEmojiPage(0);
+    } else {
+      setIsMobileEmojiPickerOpen(false);
+      setIsMobileComposerToolsOpen(false);
+      setMobileEmojiPage(0);
+    }
+    window.requestAnimationFrame(() => {
+      focusActiveComposer();
+    });
+  }, [focusActiveComposer]);
+
+  const setEmojiPage = React.useCallback((source: "desktop" | "mobile", pageIndex: number) => {
+    const nextPage = Math.max(0, Math.min(EMOJI_PAGES.length - 1, pageIndex));
+    if (source === "desktop") {
+      setDesktopEmojiPage(nextPage);
+      return;
+    }
+    setMobileEmojiPage(nextPage);
+  }, []);
+
+  const changeEmojiPage = React.useCallback((source: "desktop" | "mobile", direction: -1 | 1) => {
+    const currentPage = source === "desktop" ? desktopEmojiPage : mobileEmojiPage;
+    setEmojiPage(source, currentPage + direction);
+  }, [desktopEmojiPage, mobileEmojiPage, setEmojiPage]);
+
+  const renderEmojiPicker = React.useCallback(
+    (source: "desktop" | "mobile") => {
+      const currentPage = source === "desktop" ? desktopEmojiPage : mobileEmojiPage;
+      const emojis = EMOJI_PAGES[currentPage] ?? EMOJI_PAGES[0];
+      const isFirstPage = currentPage === 0;
+      const isLastPage = currentPage === EMOJI_PAGES.length - 1;
+
+      return (
+        <div
+          className={`rounded-2xl border border-zinc-200 bg-white p-3 shadow-[0_16px_40px_rgba(0,0,0,0.12)] ${
+            source === "desktop" ? "w-[248px]" : "w-[220px]"
+          }`}
+        >
+          <div className="mb-2 font-mono text-[10px] tracking-widest uppercase text-zinc-400">常用表情</div>
+          <div className="grid gap-2 grid-cols-5">
+            {emojis.map((emoji) => (
+              <button
+                key={`${source}-${currentPage}-${emoji}`}
+                type="button"
+                onClick={() => handleEmojiSelect(emoji, source)}
+                className="h-9 w-9 rounded-xl border border-zinc-200 bg-white text-center text-[20px] transition-colors hover:border-black hover:bg-zinc-50 active:bg-zinc-100"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => changeEmojiPage(source, -1)}
+              disabled={isFirstPage}
+              className="h-8 w-8 rounded-full border border-zinc-200 bg-white text-zinc-700 transition-colors inline-flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:border-black"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-2">
+              {EMOJI_PAGES.map((_, index) => (
+                <button
+                  key={`${source}-page-${index}`}
+                  type="button"
+                  onClick={() => setEmojiPage(source, index)}
+                  aria-label={`切换到第 ${index + 1} 页表情`}
+                  className={`h-2.5 w-2.5 rounded-full transition-colors ${
+                    index === currentPage ? "bg-black" : "bg-zinc-300 hover:bg-zinc-500"
+                  }`}
+                />
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => changeEmojiPage(source, 1)}
+              disabled={isLastPage}
+              className="h-8 w-8 rounded-full border border-zinc-200 bg-white text-zinc-700 transition-colors inline-flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:border-black"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      );
+    },
+    [changeEmojiPage, desktopEmojiPage, handleEmojiSelect, mobileEmojiPage, setEmojiPage]
+  );
 
   const renderSidebarList = (isMobileView: boolean) => {
     if (sidebarTab === 'sessions') {
@@ -1409,108 +1656,136 @@ export default function Chat() {
                   </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto px-4 py-5 bg-zinc-50">
-                  <div className="space-y-4">
-                    {isLoadingHistory && activeMessages.length === 0 ? (
-                      <div className="py-12 text-center flex flex-col items-center justify-center gap-3">
-                        <div className="w-5 h-5 rounded-full border-2 border-zinc-300 border-t-zinc-800 animate-spin" />
-                        <span className="text-zinc-400 font-mono text-[11px]">加载聊天记录中...</span>
-                      </div>
-                    ) : activeMessages.map((m, index) => {
-                      const mine = m.role === "me";
-                      const displayName = m.senderDisplayName || (mine ? meDisplayName : peerDisplayName);
-                      const photo = m.senderPhoto ?? (mine ? mePhoto : peerPhoto);
-                      const photoSrc = buildPhotoSrc(photo);
-                      const showTime = shouldShowMessageTime(activeMessages, index);
-                      return (
-                        <div key={m.id} className="w-full">
-                          {showTime ? (
-                            <div className="w-full flex justify-center">
-                              <div className="px-3 py-1 rounded-full text-[11px] text-zinc-400 font-mono bg-white/70 border border-zinc-200">
-                                {getMessageTimeLabel(m)}
-                              </div>
-                            </div>
-                          ) : null}
-                          <div className={`${showTime ? "mt-2" : ""} w-full flex ${mine ? "justify-end" : "justify-start"} gap-3`}>
-                            {!mine ? (
-                              <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
-                                {photoSrc ? (
-                                  <img src={photoSrc} alt="avatar" className="h-full w-full object-cover" />
-                                ) : (
-                                  <span className="font-mono text-[13px] font-bold text-zinc-500">
-                                    {displayName.charAt(0).toUpperCase()}
-                                  </span>
-                                )}
-                              </div>
-                            ) : null}
-                            <div className={`max-w-[78%] ${mine ? "items-end" : "items-start"} flex flex-col`}>
-                              <div className="text-[12px] text-zinc-400 font-mono leading-none">
-                                {displayName}
-                              </div>
-                              <div
-                                className={`mt-1 relative rounded-lg px-4 py-2.5 text-[15px] leading-relaxed ${
-                                  mine
-                                    ? "bg-[#07C160] text-white"
-                                    : "bg-white text-zinc-900"
-                                } ${
-                                  mine
-                                    ? "before:content-[''] before:absolute before:right-[-4px] before:top-[12px] before:w-2 before:h-2 before:bg-[#07C160] before:rotate-45"
-                                    : "before:content-[''] before:absolute before:left-[-4px] before:top-[12px] before:w-2 before:h-2 before:bg-white before:rotate-45"
-                                }`}
-                              >
-                                {m.text}
-                              </div>
-                            </div>
-                            {mine ? (
-                              <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
-                                {photoSrc ? (
-                                  <img src={photoSrc} alt="avatar" className="h-full w-full object-cover" />
-                                ) : (
-                                  <span className="font-mono text-[13px] font-bold text-zinc-500">
-                                    {displayName.charAt(0).toUpperCase()}
-                                  </span>
-                                )}
-                              </div>
-                            ) : null}
-                          </div>
+                <div className="relative flex-1 min-h-0">
+                  <div ref={mobileMessagesRef} onScroll={handleMessagesScroll} className="h-full overflow-y-auto px-4 py-5 bg-zinc-50">
+                    <div className="space-y-4">
+                      {isLoadingHistory && activeMessages.length === 0 ? (
+                        <div className="py-12 text-center flex flex-col items-center justify-center gap-3">
+                          <div className="w-5 h-5 rounded-full border-2 border-zinc-300 border-t-zinc-800 animate-spin" />
+                          <span className="text-zinc-400 font-mono text-[11px]">加载聊天记录中...</span>
                         </div>
-                      );
-                    })}
-                    <div ref={bottomRef} />
+                      ) : activeMessages.map((m, index) => {
+                        const mine = m.role === "me";
+                        const displayName = m.senderDisplayName || (mine ? meDisplayName : peerDisplayName);
+                        const photo = m.senderPhoto ?? (mine ? mePhoto : peerPhoto);
+                        const photoSrc = buildPhotoSrc(photo);
+                        const showTime = shouldShowMessageTime(activeMessages, index);
+                        return (
+                          <div key={m.id} className="w-full">
+                            {showTime ? (
+                              <div className="w-full flex justify-center">
+                                <div className="px-3 py-1 rounded-full text-[11px] text-zinc-400 font-mono bg-white/70 border border-zinc-200">
+                                  {getMessageTimeLabel(m)}
+                                </div>
+                              </div>
+                            ) : null}
+                            <div className={`${showTime ? "mt-2" : ""} w-full flex ${mine ? "justify-end" : "justify-start"} gap-3`}>
+                              {!mine ? (
+                                <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
+                                  {photoSrc ? (
+                                    <img src={photoSrc} alt="avatar" className="h-full w-full object-cover" />
+                                  ) : (
+                                    <span className="font-mono text-[13px] font-bold text-zinc-500">
+                                      {displayName.charAt(0).toUpperCase()}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : null}
+                              <div className={`max-w-[78%] ${mine ? "items-end" : "items-start"} flex flex-col`}>
+                                <div className="text-[12px] text-zinc-400 font-mono leading-none">
+                                  {displayName}
+                                </div>
+                                <div
+                                  className={`mt-1 relative rounded-lg px-4 py-2.5 text-[15px] leading-relaxed ${
+                                    mine
+                                      ? "bg-[#07C160] text-white"
+                                      : "bg-white text-zinc-900"
+                                  } ${
+                                    mine
+                                      ? "before:content-[''] before:absolute before:right-[-4px] before:top-[12px] before:w-2 before:h-2 before:bg-[#07C160] before:rotate-45"
+                                      : "before:content-[''] before:absolute before:left-[-4px] before:top-[12px] before:w-2 before:h-2 before:bg-white before:rotate-45"
+                                  }`}
+                                >
+                                  {m.text}
+                                </div>
+                              </div>
+                              {mine ? (
+                                <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
+                                  {photoSrc ? (
+                                    <img src={photoSrc} alt="avatar" className="h-full w-full object-cover" />
+                                  ) : (
+                                    <span className="font-mono text-[13px] font-bold text-zinc-500">
+                                      {displayName.charAt(0).toUpperCase()}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div ref={bottomRef} />
+                    </div>
                   </div>
+                  {showScrollToBottom ? (
+                    <button
+                      type="button"
+                      aria-label="回到底部"
+                      onClick={() => scrollToBottom("smooth")}
+                      className="absolute bottom-4 right-4 h-10 w-10 rounded-full border border-zinc-900 bg-white text-zinc-900 shadow-[0_10px_24px_rgba(0,0,0,0.16)] transition-colors hover:bg-zinc-100 active:scale-95 flex items-center justify-center"
+                    >
+                      <ArrowDown className="w-4 h-4" />
+                    </button>
+                  ) : null}
                 </div>
 
                 <div className="border-t border-zinc-200 px-3 py-3 bg-white">
                   <div className="flex items-center gap-2">
                     <div ref={mobileComposerToolsRef} className="relative shrink-0">
                       {isMobileComposerToolsOpen ? (
-                        <div className="absolute left-0 bottom-[calc(100%+8px)] flex flex-col gap-2 rounded-2xl border border-zinc-200 bg-white p-2 shadow-[0_16px_40px_rgba(0,0,0,0.12)]">
-                          <button
-                            type="button"
-                            onClick={handleMobileComposerToolClick}
-                            className="h-10 w-10 rounded-full border border-zinc-200 bg-white transition-colors flex items-center justify-center text-zinc-700 active:bg-zinc-100"
-                          >
-                            <Smile className="w-4 h-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleMobileComposerToolClick}
-                            className="h-10 w-10 rounded-full border border-zinc-200 bg-white transition-colors flex items-center justify-center text-zinc-700 active:bg-zinc-100"
-                          >
-                            <Folder className="w-4 h-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleMobileComposerToolClick}
-                            className="h-10 w-10 rounded-full border border-zinc-200 bg-white transition-colors flex items-center justify-center text-zinc-700 active:bg-zinc-100"
-                          >
-                            <ImageIcon className="w-4 h-4" />
-                          </button>
+                        <div className="absolute left-0 bottom-[calc(100%+8px)]">
+                          {isMobileEmojiPickerOpen ? (
+                            renderEmojiPicker("mobile")
+                          ) : (
+                            <div className="flex flex-col gap-2 rounded-2xl border border-zinc-200 bg-white p-2 shadow-[0_16px_40px_rgba(0,0,0,0.12)]">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setMobileEmojiPage(0);
+                                  setIsMobileEmojiPickerOpen(true);
+                                }}
+                                className="h-10 w-10 rounded-full border border-black bg-zinc-100 transition-colors flex items-center justify-center text-black active:bg-zinc-100"
+                              >
+                                <Smile className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleMobileComposerToolClick}
+                                className="h-10 w-10 rounded-full border border-zinc-200 bg-white transition-colors flex items-center justify-center text-zinc-700 active:bg-zinc-100"
+                              >
+                                <Folder className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleMobileComposerToolClick}
+                                className="h-10 w-10 rounded-full border border-zinc-200 bg-white transition-colors flex items-center justify-center text-zinc-700 active:bg-zinc-100"
+                              >
+                                <ImageIcon className="w-4 h-4" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ) : null}
                       <button
                         type="button"
-                        onClick={() => setIsMobileComposerToolsOpen((prev) => !prev)}
+                        onClick={() => {
+                          if (isMobileComposerToolsOpen) {
+                            setIsMobileComposerToolsOpen(false);
+                            setIsMobileEmojiPickerOpen(false);
+                            return;
+                          }
+                          setIsMobileComposerToolsOpen(true);
+                        }}
                         className={`h-11 w-11 rounded-full border transition-colors flex items-center justify-center ${
                           isMobileComposerToolsOpen
                             ? "border-black bg-zinc-100 text-black"
@@ -1522,6 +1797,7 @@ export default function Chat() {
                     </div>
                     <div className="flex-1">
                       <textarea
+                        ref={mobileComposerRef}
                         value={draft}
                         onChange={(e) => setDraft(e.target.value)}
                         onKeyDown={(e) => {
@@ -1679,83 +1955,118 @@ export default function Chat() {
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto px-6 py-6 bg-zinc-50">
-                    <div className="space-y-4">
-                      {isLoadingHistory && activeMessages.length === 0 ? (
-                        <div className="py-16 text-center flex flex-col items-center justify-center gap-3">
-                          <div className="w-5 h-5 rounded-full border-2 border-zinc-300 border-t-zinc-800 animate-spin" />
-                          <span className="text-zinc-400 font-mono text-[11px]">加载聊天记录中...</span>
-                        </div>
-                      ) : activeMessages.map((m, index) => {
-                        const mine = m.role === "me";
-                        const displayName = m.senderDisplayName || (mine ? meDisplayName : peerDisplayName);
-                        const photo = m.senderPhoto ?? (mine ? mePhoto : peerPhoto);
-                        const photoSrc = buildPhotoSrc(photo);
-                        const showTime = shouldShowMessageTime(activeMessages, index);
-                        return (
-                          <div key={m.id} className="w-full">
-                            {showTime ? (
-                              <div className="w-full flex justify-center">
-                                <div className="px-3 py-1 rounded-full text-[11px] text-zinc-400 font-mono bg-white/70 border border-zinc-200">
-                                  {getMessageTimeLabel(m)}
-                                </div>
-                              </div>
-                            ) : null}
-                            <div className={`${showTime ? "mt-2" : ""} w-full flex ${mine ? "justify-end" : "justify-start"} gap-3`}>
-                              {!mine ? (
-                                <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
-                                  {photoSrc ? (
-                                    <img src={photoSrc} alt="avatar" className="h-full w-full object-cover" />
-                                  ) : (
-                                    <span className="font-mono text-[13px] font-bold text-zinc-500">
-                                      {displayName.charAt(0).toUpperCase()}
-                                    </span>
-                                  )}
-                                </div>
-                              ) : null}
-                              <div className={`max-w-[70%] ${mine ? "items-end" : "items-start"} flex flex-col`}>
-                                <div className="text-[12px] text-zinc-400 font-mono leading-none">
-                                  {displayName}
-                                </div>
-                                <div
-                                  className={`mt-1 relative rounded-lg px-4 py-2.5 text-[15px] leading-relaxed ${
-                                    mine
-                                      ? "bg-[#07C160] text-white"
-                                      : "bg-white text-zinc-900"
-                                  } ${
-                                    mine
-                                      ? "before:content-[''] before:absolute before:right-[-4px] before:top-[12px] before:w-2 before:h-2 before:bg-[#07C160] before:rotate-45"
-                                      : "before:content-[''] before:absolute before:left-[-4px] before:top-[12px] before:w-2 before:h-2 before:bg-white before:rotate-45"
-                                  }`}
-                                >
-                                  {m.text}
-                                </div>
-                              </div>
-                              {mine ? (
-                                <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
-                                  {photoSrc ? (
-                                    <img src={photoSrc} alt="avatar" className="h-full w-full object-cover" />
-                                  ) : (
-                                    <span className="font-mono text-[13px] font-bold text-zinc-500">
-                                      {displayName.charAt(0).toUpperCase()}
-                                    </span>
-                                  )}
-                                </div>
-                              ) : null}
-                            </div>
+                  <div className="relative flex-1 min-h-0">
+                    <div ref={desktopMessagesRef} onScroll={handleMessagesScroll} className="h-full overflow-y-auto px-6 py-6 bg-zinc-50">
+                      <div className="space-y-4">
+                        {isLoadingHistory && activeMessages.length === 0 ? (
+                          <div className="py-16 text-center flex flex-col items-center justify-center gap-3">
+                            <div className="w-5 h-5 rounded-full border-2 border-zinc-300 border-t-zinc-800 animate-spin" />
+                            <span className="text-zinc-400 font-mono text-[11px]">加载聊天记录中...</span>
                           </div>
-                        );
-                      })}
-                      <div ref={bottomRef} />
+                        ) : activeMessages.map((m, index) => {
+                          const mine = m.role === "me";
+                          const displayName = m.senderDisplayName || (mine ? meDisplayName : peerDisplayName);
+                          const photo = m.senderPhoto ?? (mine ? mePhoto : peerPhoto);
+                          const photoSrc = buildPhotoSrc(photo);
+                          const showTime = shouldShowMessageTime(activeMessages, index);
+                          return (
+                            <div key={m.id} className="w-full">
+                              {showTime ? (
+                                <div className="w-full flex justify-center">
+                                  <div className="px-3 py-1 rounded-full text-[11px] text-zinc-400 font-mono bg-white/70 border border-zinc-200">
+                                    {getMessageTimeLabel(m)}
+                                  </div>
+                                </div>
+                              ) : null}
+                              <div className={`${showTime ? "mt-2" : ""} w-full flex ${mine ? "justify-end" : "justify-start"} gap-3`}>
+                                {!mine ? (
+                                  <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
+                                    {photoSrc ? (
+                                      <img src={photoSrc} alt="avatar" className="h-full w-full object-cover" />
+                                    ) : (
+                                      <span className="font-mono text-[13px] font-bold text-zinc-500">
+                                        {displayName.charAt(0).toUpperCase()}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : null}
+                                <div className={`max-w-[70%] ${mine ? "items-end" : "items-start"} flex flex-col`}>
+                                  <div className="text-[12px] text-zinc-400 font-mono leading-none">
+                                    {displayName}
+                                  </div>
+                                  <div
+                                    className={`mt-1 relative rounded-lg px-4 py-2.5 text-[15px] leading-relaxed ${
+                                      mine
+                                        ? "bg-[#07C160] text-white"
+                                        : "bg-white text-zinc-900"
+                                    } ${
+                                      mine
+                                        ? "before:content-[''] before:absolute before:right-[-4px] before:top-[12px] before:w-2 before:h-2 before:bg-[#07C160] before:rotate-45"
+                                        : "before:content-[''] before:absolute before:left-[-4px] before:top-[12px] before:w-2 before:h-2 before:bg-white before:rotate-45"
+                                    }`}
+                                  >
+                                    {m.text}
+                                  </div>
+                                </div>
+                                {mine ? (
+                                  <div className="h-10 w-10 rounded-full bg-zinc-100 border-[2px] border-zinc-900 overflow-hidden flex items-center justify-center shrink-0 shadow-[0_0_0_2px_rgba(255,255,255,1),0_0_0_3px_rgba(0,0,0,0.1)]">
+                                    {photoSrc ? (
+                                      <img src={photoSrc} alt="avatar" className="h-full w-full object-cover" />
+                                    ) : (
+                                      <span className="font-mono text-[13px] font-bold text-zinc-500">
+                                        {displayName.charAt(0).toUpperCase()}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <div ref={bottomRef} />
+                      </div>
                     </div>
+                    {showScrollToBottom ? (
+                      <button
+                        type="button"
+                        aria-label="回到底部"
+                        onClick={() => scrollToBottom("smooth")}
+                        className="absolute bottom-4 right-6 h-10 w-10 rounded-full border border-zinc-900 bg-white text-zinc-900 shadow-[0_10px_24px_rgba(0,0,0,0.16)] transition-colors hover:bg-zinc-100 active:scale-95 flex items-center justify-center"
+                      >
+                        <ArrowDown className="w-4 h-4" />
+                      </button>
+                    ) : null}
                   </div>
 
                   <div className="border-t border-zinc-200 bg-white flex flex-col h-[180px]">
                     {/* 工具栏 */}
                     <div className="flex items-center px-4 py-2 gap-4 text-zinc-500">
-                      <button type="button" className="hover:text-zinc-800 transition-colors p-1 rounded-md hover:bg-zinc-100">
-                        <Smile className="w-5 h-5" />
-                      </button>
+                      <div ref={desktopEmojiPickerRef} className="relative">
+                        {isDesktopEmojiPickerOpen ? (
+                          <div className="absolute left-0 bottom-[calc(100%+8px)] z-10">
+                            {renderEmojiPicker("desktop")}
+                          </div>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isDesktopEmojiPickerOpen) {
+                              setIsDesktopEmojiPickerOpen(false);
+                              setDesktopEmojiPage(0);
+                              return;
+                            }
+                            setDesktopEmojiPage(0);
+                            setIsDesktopEmojiPickerOpen(true);
+                          }}
+                          className={`transition-colors p-1 rounded-md ${
+                            isDesktopEmojiPickerOpen
+                              ? "text-black bg-zinc-100"
+                              : "hover:text-zinc-800 hover:bg-zinc-100"
+                          }`}
+                        >
+                          <Smile className="w-5 h-5" />
+                        </button>
+                      </div>
                       <button type="button" className="hover:text-zinc-800 transition-colors p-1 rounded-md hover:bg-zinc-100">
                         <Folder className="w-5 h-5" />
                       </button>
@@ -1767,33 +2078,34 @@ export default function Chat() {
                     {/* 输入区 */}
                     <div className="flex-1 flex flex-col px-4 pb-4">
                       <textarea
+                        ref={desktopComposerRef}
                         value={draft}
                         onChange={(e) => setDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        send();
-                      }
-                    }}
-                    className="flex-1 w-full resize-none bg-transparent font-mono text-[14px] text-black placeholder-zinc-400 focus:outline-none transition-colors leading-relaxed"
-                    placeholder="输入消息...（Enter 发送，Shift+Enter 换行）"
-                  />
-                  <div className="flex justify-end mt-2 h-9">
-                    {draft.trim() && (
-                      <button
-                        type="button"
-                        onClick={send}
-                        className="h-9 px-6 rounded bg-[#07C160] text-white font-mono text-[13px] hover:bg-[#06AD56] active:bg-[#05964B] transition-all flex items-center justify-center shadow-sm"
-                      >
-                        发送
-                      </button>
-                    )}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            send();
+                          }
+                        }}
+                        className="flex-1 w-full resize-none bg-transparent font-mono text-[14px] text-black placeholder-zinc-400 focus:outline-none transition-colors leading-relaxed"
+                        placeholder="输入消息...（Enter 发送，Shift+Enter 换行）"
+                      />
+                      <div className="flex justify-end mt-2 h-9">
+                        {draft.trim() && (
+                          <button
+                            type="button"
+                            onClick={send}
+                            className="h-9 px-6 rounded bg-[#07C160] text-white font-mono text-[13px] hover:bg-[#06AD56] active:bg-[#05964B] transition-all flex items-center justify-center shadow-sm"
+                          >
+                            发送
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
+                </>
+              )}
+            </div>
 
             <div className="hidden lg:flex w-[320px] bg-zinc-50 border-l border-zinc-200 flex-col">
               <div className="px-5 py-4 border-b border-zinc-200">
