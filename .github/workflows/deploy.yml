@@ -36,16 +36,6 @@ jobs:
       - name: 打包前端
         run: npm run build
 
-      - name: 上传 dist 到服务器
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT }}
-          source: dist/*
-          target: /srv/www/agentchat-ui
-
       - name: 清理并覆盖发布目录
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -54,4 +44,15 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT }}
           script: |
-            mkdir -p /srv/www/agentchat-ui
+            mkdir -p /opt/agentchat-ui
+            mkdir -p /opt/agentchat-ui/releases
+
+      - name: 上传 dist 到服务器
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+          source: dist/*
+          target: /opt/agentchat-ui
